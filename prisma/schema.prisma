@@ -1,0 +1,443 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// NextAuth.js required models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// Main application models
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String? // Para autenticação com email/senha
+  phone         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  role          UserRole  @default(USER)
+  lastLoginAt   DateTime?
+  isActive      Boolean   @default(true)
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String?
+  resetToken       String?
+  resetTokenExpiry DateTime?
+  inviteToken      String? @unique
+  inviteExpiry     DateTime?
+  invitedBy        String?
+
+  // Relations
+  accounts      Account[]
+  sessions      Session[]
+  professional  Professional?
+  client        Client?
+  teamMember    TeamMember?
+  notifications Notification[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model TeamMember {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  professionalId String
+  position       String? // Cargo/posição
+  permissions    Json? // Permissões específicas
+  salary         Float?
+  commission     Float? // Porcentagem de comissão
+  workingHours   Json? // Horários de trabalho
+  isActive       Boolean  @default(true)
+  startDate      DateTime @default(now())
+  endDate        DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  professional Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+
+  @@index([professionalId])
+  @@index([isActive])
+}
+
+model Professional {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  businessName String?
+  phone       String?
+  address     String?
+  city        String?
+  state       String?
+  zipCode     String?
+  cnpj        String?
+  verified    Boolean  @default(false)
+  plan        Plan     @default(FREE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Business settings
+  workingHours Json? // Horários de funcionamento
+  services     Json? // Serviços oferecidos
+  settings     Json? // Configurações gerais
+  reminderSettings Json? // Configurações de lembretes
+
+  // Relations
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clients       Client[]
+  appointments  Appointment[]
+  payments      Payment[]
+  transactions  Transaction[]
+  notifications Notification[]
+  teamMembers   TeamMember[]
+  reminders     AppointmentReminder[]
+}
+
+model Client {
+  id            String   @id @default(cuid())
+  userId        String?  @unique
+  professionalId String
+  name          String
+  email         String?
+  phone         String?
+  birthDate     DateTime?
+  address       String?
+  notes         String?
+  preferences   Json? // Preferências, alergias, etc.
+  loyaltyPoints Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  professional Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+  transactions Transaction[]
+  reminders    AppointmentReminder[]
+
+  @@unique([professionalId, email])
+}
+
+model Appointment {
+  id             String            @id @default(cuid())
+  professionalId String
+  clientId       String
+  teamMemberId   String? // Membro da equipe responsável
+  serviceName    String
+  servicePrice   Float
+  serviceDuration Int              // em minutos
+  scheduledFor   DateTime
+  status         AppointmentStatus @default(SCHEDULED)
+  paymentStatus  PaymentStatus     @default(PENDING)
+  notes          String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  // Relations
+  professional Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  client       Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  teamMember   TeamMember?  @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
+  payments     Payment[]
+  transactions Transaction[]
+  notifications Notification[]
+  reminders    AppointmentReminder[]
+  service      Service?      @relation(fields: [serviceId], references: [id])
+  serviceId    String?
+
+  @@index([professionalId])
+  @@index([clientId])
+  @@index([scheduledFor])
+  @@index([status])
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  professionalId        String
+  appointmentId         String?
+  amount                Float
+  currency              String        @default("BRL")
+  method                PaymentMethod
+  status                PaymentStatus @default(PENDING)
+  stripePaymentIntentId String?       @unique
+  paidAt                DateTime?
+  metadata              Json? // Dados adicionais do pagamento
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  // Relations
+  professional Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  appointment  Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+}
+
+model Transaction {
+  id                    String            @id @default(cuid())
+  professionalId        String
+  appointmentId         String?
+  clientId              String
+  amount                Int // Valor em centavos
+  currency              String            @default("BRL")
+  method                PaymentMethod
+  status                TransactionStatus @default(PENDING)
+  
+  // Stripe
+  stripePaymentIntentId String? @unique
+  stripeChargeId        String?
+  
+  // PIX
+  pixKey                String?
+  pixQrCode             String?
+  pixTxId               String?
+  
+  // Taxas
+  feeAmount             Int               @default(0) // Taxa em centavos
+  netAmount             Int // Valor líquido em centavos
+  
+  paidAt                DateTime?
+  expiresAt             DateTime?
+  metadata              Json?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  // Relations
+  professional Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  appointment  Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  client       Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  disputes     Dispute[]
+
+  @@index([professionalId])
+  @@index([clientId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Dispute {
+  id               String        @id @default(cuid())
+  transactionId    String
+  stripeDisputeId  String        @unique
+  amount           Int // Valor em centavos
+  reason           String
+  status           DisputeStatus
+  evidence         Json?
+  metadata         Json?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  // Relations
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId])
+  @@index([status])
+}
+
+model Notification {
+  id             String           @id @default(cuid())
+  userId         String?
+  professionalId String?
+  appointmentId  String?
+  type           NotificationType
+  title          String
+  message        String
+  channel        String           @default("app") // app, whatsapp, sms, email
+  recipient      String? // phone or email
+  status         String           @default("pending")
+  priority       String           @default("NORMAL") // LOW, NORMAL, HIGH, URGENT
+  read           Boolean          @default(false)
+  sentAt         DateTime?
+  readAt         DateTime?
+  metadata       Json?
+  createdAt      DateTime         @default(now())
+
+  // Relations
+  user         User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  professional Professional? @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  appointment  Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([professionalId])
+  @@index([type])
+  @@index([read])
+}
+
+// Enums
+enum UserRole {
+  USER
+  PROFESSIONAL
+  STAFF
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum Plan {
+  FREE
+  ESSENTIAL
+  PROFESSIONAL
+  BUSINESS
+  ENTERPRISE
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+  PAID
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  CANCELED
+  EXPIRED
+  REFUNDED
+}
+
+enum DisputeStatus {
+  WARNING_NEEDS_RESPONSE
+  WARNING_UNDER_REVIEW
+  WARNING_CLOSED
+  NEEDS_RESPONSE
+  UNDER_REVIEW
+  CHARGE_REFUNDED
+  WON
+  LOST
+}
+
+enum PaymentMethod {
+  PIX
+  CREDIT_CARD
+  DEBIT_CARD
+  CASH
+  TRANSFER
+}
+
+enum NotificationType {
+  APPOINTMENT_CONFIRMATION
+  APPOINTMENT_REMINDER
+  PAYMENT_CONFIRMATION
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  PAYMENT_CANCELED
+  PAYMENT_RECEIVED
+  PAYMENT_DISPUTE
+  APPOINTMENT_CANCELLATION
+  NO_SHOW_WARNING
+  MARKETING
+  SYSTEM
+  TEAM_INVITE
+}
+
+enum ReminderType {
+  WHATSAPP
+  EMAIL
+  SMS
+}
+
+enum ReminderStatus {
+  PENDING
+  SENT
+  FAILED
+  CANCELED
+}
+
+model AppointmentReminder {
+  id            String        @id @default(cuid())
+  appointmentId String
+  professionalId String
+  clientId      String
+  scheduledFor  DateTime      // Quando o lembrete deve ser enviado
+  type          ReminderType
+  status        ReminderStatus @default(PENDING)
+  sentAt        DateTime?
+  errorMessage  String?
+  metadata      Json?         // Dados adicionais como template usado, horário antes do agendamento, etc.
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  appointment  Appointment  @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  professional Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  client       Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId])
+  @@index([professionalId])
+  @@index([scheduledFor])
+  @@index([status])
+  @@index([type])
+}
+
+model Service {
+  id            String   @id @default(cuid())
+  professionalId String
+  name          String
+  description   String?
+  price         Float
+  duration      Int      // em minutos
+  category      String?
+  isActive      Boolean  @default(true)
+  metadata      Json?    // Configurações adicionais
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  professional Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+
+  @@index([professionalId])
+  @@index([isActive])
+}
